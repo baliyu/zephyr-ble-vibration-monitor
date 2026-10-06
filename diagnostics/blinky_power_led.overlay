@@ -1,0 +1,6 @@
+/* Diagnostic: make blinky blink the green "ON" power LED (P1.09) instead of the tiny red LED. */
+/ {
+	aliases {
+		led0 = &led4;
+	};
+};

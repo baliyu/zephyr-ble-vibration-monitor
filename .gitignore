@@ -1,0 +1,6 @@
+# Build output lives outside the repo (~/build); keep stray artefacts out too
+build/
+*.bin
+*.hex
+*.elf
+__pycache__/

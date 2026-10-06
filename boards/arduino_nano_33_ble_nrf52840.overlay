@@ -1,0 +1,16 @@
+/*
+ * Send the console over USB (CDC ACM) instead of the UART on the header pins.
+ * Same pattern as Zephyr's snippets/cdc-acm-console; the board file already
+ * enables the USB device (zephyr_udc0 = &usbd).
+ */
+/ {
+	chosen {
+		zephyr,console = &cdc_acm_uart0;
+	};
+};
+
+&zephyr_udc0 {
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+	};
+};
