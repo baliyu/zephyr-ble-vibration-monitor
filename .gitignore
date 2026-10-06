@@ -5,3 +5,4 @@ build/
 *.elf
 __pycache__/
 tests/host/test_accel_stats
+tests/host/test_vib_fft

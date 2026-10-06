@@ -6,11 +6,14 @@
  *    already enables the USB device (zephyr_udc0 = &usbd).
  * 2. LSM9DS1 accelerometer ON. The binding's default output data rate is the
  *    power-up configuration, which is "IMU off" (0x00): without this the
- *    accelerometer reads zeros. Accelerometer 119 Hz, gyroscope off, +-4 g.
+ *    accelerometer reads zeros. Accelerometer 952 Hz (the application reads
+ *    it at 400 Hz, so every read gets a fresh sample), gyroscope off, +-4 g.
+ *    I2C at 400 kHz so one 6-byte read takes a fraction of the 2.5 ms period.
  * 3. zephyr,deferred-init: the driver is NOT started automatically at boot.
  *    main.c starts it with device_init() after the sensor supply has settled,
  *    and reports the result. (Started at boot it failed: "LSM9DS1 NOT READY".)
  */
+#include <zephyr/dt-bindings/i2c/i2c.h>
 #include <zephyr/dt-bindings/sensor/lsm9ds1.h>
 
 / {
@@ -27,6 +30,10 @@
 
 &lsm9ds1 {
 	zephyr,deferred-init;
-	imu-odr = <LSM9DS1_GY_OFF_XL_119Hz>;
+	imu-odr = <LSM9DS1_GY_OFF_XL_952Hz>;
 	accel-range = <LSM9DS1_DT_FS_4G>;
+};
+
+&i2c1 {
+	clock-frequency = <I2C_BITRATE_FAST>;
 };
