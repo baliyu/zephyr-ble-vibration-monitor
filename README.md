@@ -7,8 +7,13 @@ Vibration monitor on the **Arduino Nano 33 BLE** (nRF52840, LSM9DS1 motion senso
 ## Progress
 - [x] Step 1 – Identified the motion sensor from the chip itself: LSM9DS1 (accel/gyro 0x6B, WHO_AM_I `0x68`; magnetometer 0x1E), so the original Nano 33 BLE, not the Rev2
 - [x] Step 2 – Zephyr 4.4.2 workspace and SDK 1.0.1 installed; blinky builds for `arduino_nano_33_ble/nrf52840`
+<<<<<<< HEAD
 - [x] Step 3 – Flashed from WSL through Arduino's `bossac` at the board's code partition (0x10000, bootloader untouched); write and verify succeeded
 - [ ] Step 4 – Application skeleton: console over USB (CDC ACM), red-LED heartbeat
+=======
+- [x] Step 3 – Flashing from WSL through Arduino's `bossac`: found and fixed a doubled flash offset (see Lessons learned); a diagnostic blinky on the green power LED proved Zephyr runs
+- [x] Step 4 – Application skeleton: console over USB (CDC ACM, appears as a COM port), red-LED heartbeat, uptime log once a second
+>>>>>>> 8c32441b841c82ba975ca95472e7babc2d189cf5
 - [ ] Sensor sampling through Zephyr's sensor API
 - [ ] FFT with CMSIS-DSP: dominant frequency and RMS instead of raw samples
 - [ ] BLE GATT service with notifications, LE Secure Connections pairing
@@ -20,6 +25,11 @@ CMakeLists.txt, prj.conf       application build and Kconfig
 boards/arduino_nano_33_ble_nrf52840.overlay   console over USB instead of the header UART
 src/main.c                     application
 tools/flash_nano33ble.sh       guarded flashing from WSL (bossac.exe on Windows)
+<<<<<<< HEAD
+=======
+tools/flash_map.py             locate an image in a flash dump (diagnostic)
+diagnostics/blinky_power_led.overlay   blinky on the green power LED, to prove the image runs
+>>>>>>> 8c32441b841c82ba975ca95472e7babc2d189cf5
 ```
 Zephyr itself lives outside the repository (`~/zephyrproject`, pinned to v4.4.2).
 
@@ -31,8 +41,17 @@ west build -p always -b arduino_nano_33_ble/nrf52840 /mnt/c/zephyr-ble-vibration
 powershell.exe -NoProfile -c "[System.IO.Ports.SerialPort]::GetPortNames()"
 sh /mnt/c/zephyr-ble-vibration-monitor/tools/flash_nano33ble.sh COM7
 ```
+<<<<<<< HEAD
 The flash script writes only at 0x10000, refuses an image larger than the code partition, and refuses to flash unless the port answers as an nRF52840 with the Arduino bootloader.
+=======
+The flash script makes the same call as the Arduino IDE (no `--offset`, see below), refuses an image larger than the code partition, refuses to flash unless the port answers as an nRF52840 with the Arduino bootloader, and stops unless bossac exits cleanly and prints `Verify successful`.
+>>>>>>> 8c32441b841c82ba975ca95472e7babc2d189cf5
 
 ## Lessons learned
 - Read the chip, not the label: the sensor's WHO_AM_I register decided the board variant.
 - In Zephyr, `led0` is whatever the board file says: on this board it is the red channel of the RGB LED, not the yellow "L" LED, which shares its pin with SPI.
+<<<<<<< HEAD
+=======
+- **A verified flash is not a running program.** Zephyr's bossac runner passes `-o 0x10000`, but Arduino's build of bossac (1.9.1-arduino2) already writes at the bootloader's application address, 0x10000: Arduino's own core links sketches at 0x10000 and uploads them with no offset. The offset was applied twice, the image landed at 0x20000, and the bootloader kept starting the old Arduino sketch at 0x10000 (green power LED steady, no Zephyr output). The bootloader refused flash reads, so the cause was found from Arduino's linker script and upload command, then confirmed with a blinky on the green power LED. The same problem is reported in Zephyr issues #33523 and #33352.
+- Testing the flash script against a fake bossac caught two bugs before they reached hardware: piping bossac's output hid its exit status, so a failed flash would have printed "Done."
+>>>>>>> 8c32441b841c82ba975ca95472e7babc2d189cf5
