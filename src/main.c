@@ -1,5 +1,6 @@
 /*
- * zephyr-ble-vibration-monitor - step 6: dominant vibration frequency (FFT).
+ * zephyr-ble-vibration-monitor - step 7: dominant vibration frequency (FFT),
+ * sent over BLE (ble_vib.c) as well as printed on the USB console.
  *
  * Threads:
  *  - sampler (priority 2): reads the LSM9DS1 every 2.5 ms (400 Hz) from a
@@ -24,6 +25,7 @@
 #include <zephyr/sys/printk.h>
 #include <zephyr/version.h>
 #include "vib_fft.h"
+#include "ble_vib.h"
 
 BUILD_ASSERT(DT_NODE_HAS_COMPAT(DT_CHOSEN(zephyr_console), zephyr_cdc_acm_uart),
 	     "The console must be the USB CDC ACM UART (see the board overlay)");
@@ -209,7 +211,7 @@ int main(void)
 	}
 	host_seen = host_connected(console);
 
-	printk("\n=== zephyr-ble-vibration-monitor, step 6 ===\n");
+	printk("\n=== zephyr-ble-vibration-monitor, step 7 ===\n");
 	printk("Zephyr %s on %s, uptime %lld ms\n", KERNEL_VERSION_STRING, CONFIG_BOARD,
 	       (long long)k_uptime_get());
 	if (!start_sensor()) {
@@ -224,16 +226,28 @@ int main(void)
 	       "up to 200 Hz; still below rms ", VIB_N);
 	print_f(STILL_RMS, 3);
 	printk(" m/s^2\n");
+	int ble_err = ble_vib_init();
+
+	if (ble_err == 0) {
+		printk("BLE advertising as \"%s\" (service 5f2e0001-6d1b-4a3c-9b2e-7c4d1a2b3c4d)\n",
+		       CONFIG_BT_DEVICE_NAME);
+	} else {
+		printk("BLE start FAILED (error %d) - continuing without it\n", ble_err);
+	}
 	print_header();
 
 	k_thread_create(&sampler_thread, sampler_stack, K_THREAD_STACK_SIZEOF(sampler_stack),
 			sampler, NULL, NULL, NULL, SAMPLER_PRIO, 0, K_NO_WAIT);
 	k_thread_name_set(&sampler_thread, "sampler");
 
+	uint16_t seq = 0;
+	enum ble_vib_state ble_prev = BLE_VIB_OFF;
+
 	while (1) {
 		uint8_t b;
 		struct block_info bi;
 		struct vib_result r;
+		enum ble_vib_state ble_now = ble_prev;   /* unchanged unless published */
 
 		(void)k_msgq_get(&block_q, &b, K_FOREVER);
 		for (int a = 0; a < 3; a++) {
@@ -250,10 +264,14 @@ int main(void)
 		int ret = vib_fft_analyse(axes, VIB_N, fs, MIN_FREQ_HZ, STILL_RMS, &r);
 		uint32_t fft_us = k_cyc_to_us_floor32(k_cycle_get_32() - c0);
 
+		if (ret == VIB_OK) {
+			ble_now = ble_vib_publish(&r, seq++);
+		}
 		if (led_ok) {
 			(void)gpio_pin_toggle_dt(&led);
 		}
 		if (!host_connected(console)) {
+			ble_prev = ble_now;
 			host_seen = false;
 			continue;
 		}
@@ -261,6 +279,10 @@ int main(void)
 			host_seen = true;
 			printk("\n(terminal connected)\n");
 			print_header();
+		}
+		if (ble_now != ble_prev) {
+			printk("BLE: %s\n", ble_vib_state_str(ble_now));
+			ble_prev = ble_now;
 		}
 		if (ret != VIB_OK) {
 			printk("analysis error %d (rate ", ret);
