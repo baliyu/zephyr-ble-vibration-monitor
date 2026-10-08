@@ -14,7 +14,7 @@ Vibration monitor on the **Arduino Nano 33 BLE** (nRF52840, LSM9DS1 motion senso
 - [x] Step 7 – BLE GATT service: the board advertises as `VibMon Nano33` with a custom service of two read + notify characteristics (a 9-byte binary measurement and a short text summary), one notification per 1.28 s block. Verified with nRF Connect on an iPhone: the values on the phone match the USB console
 - [x] Step 8a – Secure pairing: the values can only be read or subscribed to over an authenticated LE Secure Connections link. The board has no display, so a random 6-digit passkey is printed on the USB console and typed into the phone. On hardware: pairing reaches security level 4, reconnecting needs no passkey, a wrong passkey is refused
 - [x] Step 8b – Bonds in flash and a console command to forget them: a paired phone stays paired across RESET; typing `U` then `y` on the console deletes all bonds (and the deletion also survives RESET)
-- [ ] Step 9 – ztest unit tests on `native_sim`
+- [x] Step 9 – Zephyr ztest unit tests for the four board-independent modules (`accel_stats`, `vib_fft`, `ble_fmt`, `ble_cmd`): 44 test cases that run on the PC as a normal program on `native_sim`, with the same CMSIS-DSP the firmware uses. The plain `make` tests in `tests/host` stay as a quick local check
 - [ ] Step 10 – GitHub Actions CI (build + tests)
 
 ## Layout
@@ -29,6 +29,7 @@ src/ble_vib.c                  the GATT service, advertising, notifications (Zep
 src/ble_sec.c                  pairing policy: passkey display, pairing events, forget command thread
 src/ble_cmd.c                  the U-then-y console command as a pure state machine (tested on the PC)
 tests/host/                    PC tests: make -C tests/host (uses Zephyr's own CMSIS-DSP)
+tests/unit/                    ztest suites on native_sim (Zephyr test app, see "Unit tests")
 tools/flash_nano33ble.sh       guarded flashing from WSL (bossac.exe on Windows)
 tools/flash_map.py             locate an image in a flash dump (diagnostic)
 diagnostics/blinky_power_led.overlay   blinky on the green power LED, to prove the image runs
@@ -67,11 +68,29 @@ One notification per analysed block (every 1.28 s) goes to a phone that has subs
 - `CONFIG_BT_SMP_SC_ONLY=y` (Secure Connections Only mode): the stack accepts only authenticated LE Secure Connections pairing at security level 4 and rejects Just Works pairing (checked in Zephyr's `smp.c`), so an unauthenticated bond cannot exist. MITM protection is enforced.
 - **Policy as a build check:** `ble_sec.c` fails the build if `CONFIG_BT_SMP_SC_ONLY` or `CONFIG_BT_SETTINGS` is missing from `prj.conf`, or if `CONFIG_BT_FIXED_PASSKEY` (a fixed, public passkey) is enabled.
 - **Bonds are kept in flash** (Zephyr settings on NVS, in the board's free 32 KB `storage_partition` at 0xF8000), so a paired phone stays paired across RESET. Up to two phones can be paired; a third that also knows the passkey replaces the oldest.
-- **Forgetting the bonds:** the only button is RESET, so the USB console is the management interface. In a terminal on the board's COM port type **`U`**, then **`y`** within 5 seconds: all paired phones are deleted from RAM and flash and any connected phone is disconnected. Any other key, or 5 seconds of silence, cancels. The key logic (`src/ble_cmd.c`) is a small state machine with 15 PC tests: a lone `y` does nothing, a late `y` is refused, Enter is ignored, the millisecond counter may wrap. Also use *Settings > Bluetooth > (i) > Forget This Device* on the iPhone; if only the board forgets, iOS reports that the peer removed its pairing information until the phone forgets the device too.
+- **Forgetting the bonds:** the only button is RESET, so the USB console is the management interface. In a terminal on the board's COM port type **`U`**, then **`y`** within 5 seconds: all paired phones are deleted from RAM and flash and any connected phone is disconnected. Any other key, or 5 seconds of silence, cancels. The key logic (`src/ble_cmd.c`) is a small state machine with 16 PC tests: a lone `y` does nothing, a late `y` is refused, Enter is ignored, the millisecond counter may wrap. Also use *Settings > Bluetooth > (i) > Forget This Device* on the iPhone; if only the board forgets, iOS reports that the peer removed its pairing information until the phone forgets the device too.
 
 **Verified on the Nano 33 BLE + iPhone (nRF Connect):** pairing with the passkey reaches security level 4; the values then arrive and match the console; disconnecting and reconnecting needs no passkey; a wrong passkey fails with `authentication failed` and no notifications follow; after RESET the board reports `1 paired phone(s) restored from flash` and the phone reconnects without a passkey; the forget command prints `BLE bond deleted ...`, and after RESET the board reports `0 paired phone(s)`. Sampling stayed at 0 missed / 0 errors / 0 dropped throughout, including while keys were written to and deleted from flash.
 
 **Not verified:** that an *unpaired* phone is refused a read directly (it follows from the permissions, but I never watched it happen); an Android phone; two phones paired at once; whether reflashing keeps or erases the bonds. The pairing code itself cannot run on the PC (the passkey comes from the Zephyr Bluetooth stack), so it was compiled against stand-in headers and then proven on the board.
+
+## Unit tests
+Two sets of PC tests cover the same four modules (`accel_stats`, `vib_fft`, `ble_fmt`, `ble_cmd`), which contain no board code:
+- **`tests/host/`**: plain C with a Makefile, no Zephyr build needed apart from its CMSIS-DSP source. `make -C tests/host`.
+- **`tests/unit/`**: Zephyr **ztest** suites, 44 test cases in five suites, built for **`native_sim`** so the code runs as an ordinary PC program with Zephyr's own CMSIS-DSP. This is what continuous integration will run.
+
+```bash
+source ~/zephyrproject/.venv/bin/activate && cd ~/zephyrproject/zephyr
+west build -p always -b native_sim/native/64 /mnt/c/zephyr-ble-vibration-monitor/tests/unit -d ~/build/unit
+~/build/unit/zephyr/zephyr.exe          # ends with PROJECT EXECUTION SUCCESSFUL
+```
+The `/64` variant needs no 32-bit libraries. The same suites run under Twister: `west twister -T tests/unit -p native_sim/native/64`.
+
+**Design notes**
+- The FFT is checked on real signals: single tones on each axis, a 3-190 Hz sweep, two tones, a diagonal vibration, noise-only, a tone buried in noise, slow tilting, and the measured 399.6 Hz sample rate.
+- Noise comes from a small deterministic generator, so results do not depend on the C library's `rand()`.
+- "Refuses to run before init" can only be observed once per process. It is its own suite, `vib_fft_1_before_init`, which Zephyr runs before `vib_fft_2_analysis` because it sorts suites by name.
+- A test that cannot fail proves nothing. As a check, the confirm window in `ble_cmd.c` was changed by one millisecond; exactly the two tests about the window failed, and the source was restored.
 
 ## Known limitations
 - **Aliasing above 200 Hz.** At 400 Hz sampling, vibrations above 200 Hz appear mirrored below it (250 Hz would read about 150 Hz). The sensor runs at 952 Hz with its own filter at a few hundred Hz, which does not fully prevent this. The fix is to read the sensor's internal FIFO at its full rate, which Zephyr's LSM9DS1 driver does not support yet.
@@ -110,4 +129,5 @@ The flash script makes the same call as the Arduino IDE (no `--offset`, see belo
 - **Check the stack, not memory.** Every pairing API and Kconfig name was checked against the Zephyr v4.4.2 source, which also showed what `bt_unpair` really does (disconnects the phone, deletes the keys and the stored notification state) and that the USB console driver discards output rather than blocking when no terminal is open.
 - **Make the policy fail the build.** A security setting that lives only in `prj.conf` can be dropped by accident; `BUILD_ASSERT`s in `ble_sec.c` turn that into a compile error (checked by compiling with the setting removed).
 - **Separate logic from the stack to test it.** The Bluetooth parts cannot run on the PC, so the byte formats (`ble_fmt.c`) and the unpair key sequence (`ble_cmd.c`) are plain C with their own PC tests; only the thin Zephyr glue is proven on the board.
+- **A suite is only as good as its checks.** The ztest port was compared check by check with the older PC tests; two slips (a wrong expected value and different input numbers in one rounding test) were found that way before the first run.
 - **Hardware surprises are still possible after tests pass.** The key parser passed every PC test, yet on the board a capital `Y` was not accepted once while `y` was. It is listed as a limitation rather than hidden.
