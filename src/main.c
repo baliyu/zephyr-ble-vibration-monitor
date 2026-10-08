@@ -1,6 +1,7 @@
 /*
- * zephyr-ble-vibration-monitor - step 7: dominant vibration frequency (FFT),
- * sent over BLE (ble_vib.c) as well as printed on the USB console.
+ * zephyr-ble-vibration-monitor - step 8: dominant vibration frequency (FFT),
+ * sent over BLE (ble_vib.c) to paired phones only (ble_sec.c) as well as
+ * printed on the USB console.
  *
  * Threads:
  *  - sampler (priority 2): reads the LSM9DS1 every 2.5 ms (400 Hz) from a
@@ -211,7 +212,7 @@ int main(void)
 	}
 	host_seen = host_connected(console);
 
-	printk("\n=== zephyr-ble-vibration-monitor, step 7 ===\n");
+	printk("\n=== zephyr-ble-vibration-monitor, step 8b ===\n");
 	printk("Zephyr %s on %s, uptime %lld ms\n", KERNEL_VERSION_STRING, CONFIG_BOARD,
 	       (long long)k_uptime_get());
 	if (!start_sensor()) {

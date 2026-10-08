@@ -12,10 +12,11 @@ CFLAGS = -std=c11 -Wall -Wextra -Werror -O2 -I../../src
 # __GNUC_PYTHON__ lets CMSIS-DSP build on a PC without CMSIS-Core (as its Python wrapper does)
 DSP_FLAGS = -D__GNUC_PYTHON__ -I$(CMSIS_DSP)/Include -I$(CMSIS_DSP)/PrivateInclude
 
-test: test_accel_stats test_vib_fft test_ble_fmt
+test: test_accel_stats test_vib_fft test_ble_fmt test_ble_cmd
 	./test_accel_stats
 	./test_vib_fft
 	./test_ble_fmt
+	./test_ble_cmd
 
 test_accel_stats: test_accel_stats.c ../../src/accel_stats.c ../../src/accel_stats.h
 	$(CC) $(CFLAGS) -o $@ test_accel_stats.c ../../src/accel_stats.c -lm
@@ -27,6 +28,9 @@ test_vib_fft: test_vib_fft.c ../../src/vib_fft.c ../../src/vib_fft.h
 test_ble_fmt: test_ble_fmt.c ../../src/ble_fmt.c ../../src/ble_fmt.h ../../src/vib_fft.h
 	$(CC) $(CFLAGS) -o $@ test_ble_fmt.c ../../src/ble_fmt.c
 
+test_ble_cmd: test_ble_cmd.c ../../src/ble_cmd.c ../../src/ble_cmd.h
+	$(CC) $(CFLAGS) -o $@ test_ble_cmd.c ../../src/ble_cmd.c
+
 clean:
-	rm -f test_accel_stats test_vib_fft test_ble_fmt
+	rm -f test_accel_stats test_vib_fft test_ble_fmt test_ble_cmd
 .PHONY: test clean

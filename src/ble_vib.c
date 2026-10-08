@@ -2,9 +2,11 @@
  * samples/bluetooth/peripheral and peripheral_hr. */
 #include "ble_vib.h"
 #include "ble_fmt.h"
+#include "ble_sec.h"
 
 #include <string.h>
 #include <zephyr/kernel.h>
+#include <zephyr/settings/settings.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/bluetooth/bluetooth.h>
@@ -69,17 +71,19 @@ static void text_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 	atomic_set(&text_sub, (value & BT_GATT_CCC_NOTIFY) ? 1 : 0);
 }
 
-/* attrs: [0] service, [1] meas declaration, [2] meas value, [3] CCC, [4] CUD,
+/* Step 8: values and CCCs need an AUTHENTICATED link (pairing with a passkey,
+ * see ble_sec.c). The label descriptors stay public: they reveal no data.
+ * attrs: [0] service, [1] meas declaration, [2] meas value, [3] CCC, [4] CUD,
  *        [5] text declaration, [6] text value, [7] CCC, [8] CUD */
 BT_GATT_SERVICE_DEFINE(vib_svc,
 	BT_GATT_PRIMARY_SERVICE(&svc_uuid),
 	BT_GATT_CHARACTERISTIC(&meas_uuid.uuid, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
-			       BT_GATT_PERM_READ, read_meas, NULL, NULL),
-	BT_GATT_CCC(meas_ccc_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+			       BT_GATT_PERM_READ_AUTHEN, read_meas, NULL, NULL),
+	BT_GATT_CCC(meas_ccc_changed, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),
 	BT_GATT_CUD("Vibration measurement", BT_GATT_PERM_READ),
 	BT_GATT_CHARACTERISTIC(&text_uuid.uuid, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
-			       BT_GATT_PERM_READ, read_text, NULL, NULL),
-	BT_GATT_CCC(text_ccc_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+			       BT_GATT_PERM_READ_AUTHEN, read_text, NULL, NULL),
+	BT_GATT_CCC(text_ccc_changed, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),
 	BT_GATT_CUD("Summary (text)", BT_GATT_PERM_READ),
 );
 #define MEAS_VALUE_ATTR (&vib_svc.attrs[2])
@@ -137,7 +141,23 @@ int ble_vib_init(void)
 	    bt_uuid_cmp(TEXT_VALUE_ATTR->uuid, &text_uuid.uuid) != 0) {
 		return -EINVAL;
 	}
+	err = ble_sec_init();    /* pairing callbacks: before anyone can connect */
+	if (err) {
+		return err;
+	}
 	err = bt_enable(NULL);
+	if (err) {
+		return err;
+	}
+	/* Step 8b: restore the pairing keys from flash. As in Zephyr's
+	 * peripheral_hids sample this comes after bt_enable(). */
+	if (IS_ENABLED(CONFIG_BT_SETTINGS)) {
+		err = settings_load();
+		if (err) {
+			return err;
+		}
+	}
+	err = ble_sec_start();
 	if (err) {
 		return err;
 	}
