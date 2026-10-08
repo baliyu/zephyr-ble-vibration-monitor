@@ -4,7 +4,7 @@
 
 Vibration monitor on the **Arduino Nano 33 BLE** (nRF52840, LSM9DS1 motion sensor) built on **Zephyr RTOS 4.4.2**: sensor sampling, CMSIS-DSP FFT, a secure BLE GATT service, unit tests that run on the PC, and CI.
 
-**Status: in progress.**
+**Status: finished.** All ten planned steps are done and verified; the optional ideas that remain are listed under Known limitations.
 
 ## Progress
 - [x] Step 1 – Identified the motion sensor from the chip itself: LSM9DS1 (accel/gyro 0x6B, WHO_AM_I `0x68`; magnetometer 0x1E), so the original Nano 33 BLE, not the Rev2
@@ -81,7 +81,7 @@ One notification per analysed block (every 1.28 s) goes to a phone that has subs
 ## Unit tests
 Two sets of PC tests cover the same four modules (`accel_stats`, `vib_fft`, `ble_fmt`, `ble_cmd`), which contain no board code:
 - **`tests/host/`**: plain C with a Makefile, no Zephyr build needed apart from its CMSIS-DSP source. `make -C tests/host`.
-- **`tests/unit/`**: Zephyr **ztest** suites, 44 test cases in five suites, built for **`native_sim`** so the code runs as an ordinary PC program with Zephyr's own CMSIS-DSP. This is what continuous integration will run.
+- **`tests/unit/`**: Zephyr **ztest** suites, 44 test cases in five suites, built for **`native_sim`** so the code runs as an ordinary PC program with Zephyr's own CMSIS-DSP. This is what continuous integration runs.
 
 ```bash
 source ~/zephyrproject/.venv/bin/activate && cd ~/zephyrproject/zephyr
