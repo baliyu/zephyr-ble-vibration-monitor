@@ -11,8 +11,11 @@ Vibration monitor on the **Arduino Nano 33 BLE** (nRF52840, LSM9DS1 motion senso
 - [x] Step 4 – Application skeleton: console over USB (CDC ACM, appears as a COM port), red-LED heartbeat, uptime log once a second
 - [x] Step 5 – LSM9DS1 accelerometer through Zephyr's sensor API, with a start-up report (I2C probe of both sensor chips, supply state, driver start). Flat: |a| = 9.57 m/s^2; tilted: 9.80 (see Lessons learned)
 - [x] Step 6 – Dominant vibration frequency with a CMSIS-DSP FFT: 400 Hz sampling thread with ping-pong buffers, 512-point Hann-windowed FFT per axis, summed spectra, interpolated peak. On hardware: still / hand shaking at 2.3-3.5 Hz; FFT 2.8 ms per 1.28 s block; 0 missed ticks, read errors or dropped blocks
-- [ ] BLE GATT service with notifications, LE Secure Connections pairing
-- [ ] ztest unit tests on `native_sim` and GitHub Actions CI
+- [x] Step 7 – BLE GATT service: the board advertises as `VibMon Nano33` with a custom service of two read + notify characteristics (a 9-byte binary measurement and a short text summary), one notification per 1.28 s block. Verified with nRF Connect on an iPhone: the values on the phone match the USB console
+- [x] Step 8a – Secure pairing: the values can only be read or subscribed to over an authenticated LE Secure Connections link. The board has no display, so a random 6-digit passkey is printed on the USB console and typed into the phone. On hardware: pairing reaches security level 4, reconnecting needs no passkey, a wrong passkey is refused
+- [x] Step 8b – Bonds in flash and a console command to forget them: a paired phone stays paired across RESET; typing `U` then `y` on the console deletes all bonds (and the deletion also survives RESET)
+- [ ] Step 9 – ztest unit tests on `native_sim`
+- [ ] Step 10 – GitHub Actions CI (build + tests)
 
 ## Layout
 ```
@@ -21,6 +24,10 @@ boards/arduino_nano_33_ble_nrf52840.overlay   console over USB instead of the he
 src/main.c                     sampler thread + analysis thread, USB console output
 src/vib_fft.c                  dominant frequency, amplitude and rms (CMSIS-DSP real FFT)
 src/accel_stats.c              integer statistics (step 5)
+src/ble_fmt.c                  byte layout of the two characteristics (pure C, tested on the PC)
+src/ble_vib.c                  the GATT service, advertising, notifications (Zephyr Bluetooth)
+src/ble_sec.c                  pairing policy: passkey display, pairing events, forget command thread
+src/ble_cmd.c                  the U-then-y console command as a pure state machine (tested on the PC)
 tests/host/                    PC tests: make -C tests/host (uses Zephyr's own CMSIS-DSP)
 tools/flash_nano33ble.sh       guarded flashing from WSL (bossac.exe on Windows)
 tools/flash_map.py             locate an image in a flash dump (diagnostic)
@@ -34,10 +41,47 @@ Zephyr itself lives outside the repository (`~/zephyrproject`, pinned to v4.4.2)
 - **Measured rate, not nominal:** a 2.5 ms timer on a 32768 Hz system clock really gives 399.6 Hz; the frequency calculation uses the measured rate (a test shows assuming 400 Hz would put 50 Hz at 50.05 Hz).
 - **PC tests:** 17 tests for the FFT module, built against the exact CMSIS-DSP revision Zephyr 4.4.2 pins: worst frequency error 0.013 Hz over a 3-190 Hz sweep on all axes (bin width 0.78 Hz), worst amplitude error 0.7%, two-tone, diagonal, noise-only, buried-in-noise, slow-tilt and bad-input cases; also run under the address and undefined-behaviour sanitizers.
 
+## BLE service
+The board advertises as **`VibMon Nano33`** with one custom service. The UUIDs are randomly chosen 128-bit values.
+
+| Item | UUID | Properties | Content |
+|---|---|---|---|
+| Service | `5f2e0001-6d1b-4a3c-9b2e-7c4d1a2b3c4d` | | |
+| Measurement | `5f2e0002-6d1b-4a3c-9b2e-7c4d1a2b3c4d` | read, notify | 9 bytes, little-endian |
+| Summary | `5f2e0003-6d1b-4a3c-9b2e-7c4d1a2b3c4d` | read, notify | UTF-8 text, at most 20 bytes |
+
+**Measurement bytes:** `flags` (bit 0 = vibrating), `frequency` in 0.1 Hz, `amplitude` and `rms` in milli-m/s^2 (each a 16-bit value), and a 16-bit block sequence number. Frequency and amplitude are 0 when the board is still. Example from a real capture: `01 54 00 6D 21 E9 18 D0 00` is vibrating, 0x0054 = 8.4 Hz, amplitude 0x216D = 8.557 m/s^2, rms 0x18E9 = 6.377 m/s^2, block 208; the USB console printed the same 8.4 Hz / 8.557 / 6.377 for that block.
+
+**Summary text:** for example `24.6Hz 0.51 0.37` (frequency, amplitude, rms) or `still rms 0.025`. It is kept to 20 bytes so it fits one notification at the default ATT MTU.
+
+One notification per analysed block (every 1.28 s) goes to a phone that has subscribed. After a disconnection the board starts advertising again by itself. The byte layout lives in `src/ble_fmt.c`, which has no Zephyr code in it and 10 PC tests (exact bytes and byte order, rounding, clamping of absurd values, NaN and negatives, the 20-byte worst case).
+
+**Try it with nRF Connect (iPhone):** Scanner tab, connect to `VibMon Nano33`, open the service starting `5F2E0001`, and subscribe to a characteristic (the far-right button on its row). The first time, the phone asks for a passkey (next section). The service layout, names and labels are visible before pairing; the values are not.
+
+## BLE security
+**Goal:** only a phone that has been paired with a passkey can read or subscribe to the vibration data. Anyone nearby can still see the device, connect to it and discover the service.
+
+**How it works**
+- The characteristic values and their notification (CCC) descriptors require an *authenticated* link (`BT_GATT_PERM_READ_AUTHEN` / `WRITE_AUTHEN`). The text labels stay public because they carry no data.
+- The Nano 33 BLE has no display or keyboard, so "Just Works" pairing would be encrypted but not authenticated: anyone could pair. Instead the board **prints a random 6-digit passkey on the USB console** and the phone user types it in. Whoever can see the console can pair; if nobody has it open, pairing fails. An unexpected passkey appearing on the console is also a visible warning that someone else tried to pair.
+- `CONFIG_BT_SMP_SC_ONLY=y` (Secure Connections Only mode): the stack accepts only authenticated LE Secure Connections pairing at security level 4 and rejects Just Works pairing (checked in Zephyr's `smp.c`), so an unauthenticated bond cannot exist. MITM protection is enforced.
+- **Policy as a build check:** `ble_sec.c` fails the build if `CONFIG_BT_SMP_SC_ONLY` or `CONFIG_BT_SETTINGS` is missing from `prj.conf`, or if `CONFIG_BT_FIXED_PASSKEY` (a fixed, public passkey) is enabled.
+- **Bonds are kept in flash** (Zephyr settings on NVS, in the board's free 32 KB `storage_partition` at 0xF8000), so a paired phone stays paired across RESET. Up to two phones can be paired; a third that also knows the passkey replaces the oldest.
+- **Forgetting the bonds:** the only button is RESET, so the USB console is the management interface. In a terminal on the board's COM port type **`U`**, then **`y`** within 5 seconds: all paired phones are deleted from RAM and flash and any connected phone is disconnected. Any other key, or 5 seconds of silence, cancels. The key logic (`src/ble_cmd.c`) is a small state machine with 15 PC tests: a lone `y` does nothing, a late `y` is refused, Enter is ignored, the millisecond counter may wrap. Also use *Settings > Bluetooth > (i) > Forget This Device* on the iPhone; if only the board forgets, iOS reports that the peer removed its pairing information until the phone forgets the device too.
+
+**Verified on the Nano 33 BLE + iPhone (nRF Connect):** pairing with the passkey reaches security level 4; the values then arrive and match the console; disconnecting and reconnecting needs no passkey; a wrong passkey fails with `authentication failed` and no notifications follow; after RESET the board reports `1 paired phone(s) restored from flash` and the phone reconnects without a passkey; the forget command prints `BLE bond deleted ...`, and after RESET the board reports `0 paired phone(s)`. Sampling stayed at 0 missed / 0 errors / 0 dropped throughout, including while keys were written to and deleted from flash.
+
+**Not verified:** that an *unpaired* phone is refused a read directly (it follows from the permissions, but I never watched it happen); an Android phone; two phones paired at once; whether reflashing keeps or erases the bonds. The pairing code itself cannot run on the PC (the passkey comes from the Zephyr Bluetooth stack), so it was compiled against stand-in headers and then proven on the board.
+
 ## Known limitations
 - **Aliasing above 200 Hz.** At 400 Hz sampling, vibrations above 200 Hz appear mirrored below it (250 Hz would read about 150 Hz). The sensor runs at 952 Hz with its own filter at a few hundred Hz, which does not fully prevent this. The fix is to read the sensor's internal FIFO at its full rate, which Zephyr's LSM9DS1 driver does not support yet.
 - **Sample timing.** Polling a sensor that samples on its own clock gives up to about 1 ms uncertainty in when each value was taken: fine for finding a dominant frequency, not for precise phase or amplitude work.
 - **No calibration.** The Z axis reads about 2.5 % low on this board (see below).
+- **Whoever has the USB port is trusted.** The passkey appears on the console and the forget command is typed there, so physical access to the board is the trust anchor. A person with the console open sees the passkey of any pairing attempt, including a stranger's.
+- **The pairing keys are stored unencrypted in flash.** Reading the flash (for example with a debug probe) would expose them. There is no flash encryption or readout protection on this board setup.
+- **Not private.** The device name, fixed address and service UUID are advertised in the clear, and an unpaired phone can connect and discover the service structure (not the values).
+- **The confirm key.** On hardware the forget command confirmed with a lowercase `y`; a capital `Y` did not work once and I did not find out why, although the parser accepts both (PC test) and the USB driver passes keys through. Treat `y` as the documented key.
+- **Flash writes pause the CPU briefly.** The 400 Hz sampling showed no missed ticks while keys were stored and deleted, but this was observed on a few occasions, not stress-tested.
 
 ## Build and flash (Ubuntu/WSL2)
 ```bash
@@ -47,6 +91,8 @@ west build -p always -b arduino_nano_33_ble/nrf52840 /mnt/c/zephyr-ble-vibration
 powershell.exe -NoProfile -c "[System.IO.Ports.SerialPort]::GetPortNames()"
 sh /mnt/c/zephyr-ble-vibration-monitor/tools/flash_nano33ble.sh COM7
 ```
+After flashing, the application's own USB serial port appears (a different COM port from the bootloader's); open it at 115200 baud. The program waits up to 30 seconds for a terminal before printing. The PC tests run with `make -C tests/host`.
+
 The flash script makes the same call as the Arduino IDE (no `--offset`, see below), refuses an image larger than the code partition, refuses to flash unless the port answers as an nRF52840 with the Arduino bootloader, and stops unless bossac exits cleanly and prints `Verify successful`.
 
 ## Lessons learned
@@ -60,3 +106,8 @@ The flash script makes the same call as the Arduino IDE (no `--offset`, see belo
 - **Per-axis error shows up as orientation dependence.** Flat, |a| read 9.57 m/s^2; tilted so gravity fell on X and Y, 9.80. Same code, different axis: the Z axis reads about 2.5 % low on this sensor, a calibration matter, not a code fault.
 - **Faster sensor, more noise.** Raising the sensor rate from 119 to 952 Hz widened its internal filter and raised the still-board noise from about 0.008 to 0.025 m/s^2 rms; the "still" threshold (0.05) still separates it.
 - **Stub compiles catch real bugs.** Compiling `main.c` against minimal stand-in Zephyr headers on the PC caught a `printk` format mismatch (`int64_t` is not `long long` on every platform) before the first real build.
+- **Encrypted is not authenticated.** "Just Works" pairing encrypts the link but anyone can pair, so a device without a display or keyboard needs another channel for the passkey. Here the USB console is that channel, and Secure Connections Only mode makes the stack refuse the unauthenticated fallback instead of trusting every central to behave.
+- **Check the stack, not memory.** Every pairing API and Kconfig name was checked against the Zephyr v4.4.2 source, which also showed what `bt_unpair` really does (disconnects the phone, deletes the keys and the stored notification state) and that the USB console driver discards output rather than blocking when no terminal is open.
+- **Make the policy fail the build.** A security setting that lives only in `prj.conf` can be dropped by accident; `BUILD_ASSERT`s in `ble_sec.c` turn that into a compile error (checked by compiling with the setting removed).
+- **Separate logic from the stack to test it.** The Bluetooth parts cannot run on the PC, so the byte formats (`ble_fmt.c`) and the unpair key sequence (`ble_cmd.c`) are plain C with their own PC tests; only the thin Zephyr glue is proven on the board.
+- **Hardware surprises are still possible after tests pass.** The key parser passed every PC test, yet on the board a capital `Y` was not accepted once while `y` was. It is listed as a limitation rather than hidden.
