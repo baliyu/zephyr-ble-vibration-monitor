@@ -1,5 +1,7 @@
 # Zephyr BLE Vibration Monitor
 
+[![CI](https://github.com/baliyu/zephyr-ble-vibration-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/baliyu/zephyr-ble-vibration-monitor/actions/workflows/ci.yml)
+
 Vibration monitor on the **Arduino Nano 33 BLE** (nRF52840, LSM9DS1 motion sensor) built on **Zephyr RTOS 4.4.2**: sensor sampling, CMSIS-DSP FFT, a secure BLE GATT service, unit tests that run on the PC, and CI.
 
 **Status: in progress.**
@@ -15,7 +17,7 @@ Vibration monitor on the **Arduino Nano 33 BLE** (nRF52840, LSM9DS1 motion senso
 - [x] Step 8a – Secure pairing: the values can only be read or subscribed to over an authenticated LE Secure Connections link. The board has no display, so a random 6-digit passkey is printed on the USB console and typed into the phone. On hardware: pairing reaches security level 4, reconnecting needs no passkey, a wrong passkey is refused
 - [x] Step 8b – Bonds in flash and a console command to forget them: a paired phone stays paired across RESET; typing `U` then `y` on the console deletes all bonds (and the deletion also survives RESET)
 - [x] Step 9 – Zephyr ztest unit tests for the four board-independent modules (`accel_stats`, `vib_fft`, `ble_fmt`, `ble_cmd`): 44 test cases that run on the PC as a normal program on `native_sim`, with the same CMSIS-DSP the firmware uses. The plain `make` tests in `tests/host` stay as a quick local check
-- [ ] Step 10 – GitHub Actions CI (build + tests)
+- [x] Step 10 – GitHub Actions CI: on every push and pull request, one job runs the unit tests on `native_sim` and another builds the firmware for the Nano 33 BLE with the pinned Zephyr 4.4.2 and SDK 1.0.1. The badge above shows the latest result
 
 ## Layout
 ```
@@ -30,6 +32,8 @@ src/ble_sec.c                  pairing policy: passkey display, pairing events, 
 src/ble_cmd.c                  the U-then-y console command as a pure state machine (tested on the PC)
 tests/host/                    PC tests: make -C tests/host (uses Zephyr's own CMSIS-DSP)
 tests/unit/                    ztest suites on native_sim (Zephyr test app, see "Unit tests")
+.github/workflows/ci.yml       the CI workflow (two jobs, see "Continuous integration")
+tools/ci_setup.sh              pinned Zephyr workspace and SDK setup used by CI (and runnable by hand)
 tools/flash_nano33ble.sh       guarded flashing from WSL (bossac.exe on Windows)
 tools/flash_map.py             locate an image in a flash dump (diagnostic)
 diagnostics/blinky_power_led.overlay   blinky on the green power LED, to prove the image runs
@@ -92,6 +96,28 @@ The `/64` variant needs no 32-bit libraries. The same suites run under Twister: 
 - "Refuses to run before init" can only be observed once per process. It is its own suite, `vib_fft_1_before_init`, which Zephyr runs before `vib_fft_2_analysis` because it sorts suites by name.
 - A test that cannot fail proves nothing. As a check, the confirm window in `ble_cmd.c` was changed by one millisecond; exactly the two tests about the window failed, and the source was restored.
 
+## Continuous integration
+`.github/workflows/ci.yml` runs on every push to `main`, on pull requests and on demand. Two jobs, both on Ubuntu 24.04:
+
+| Job | What it does |
+|---|---|
+| **Unit tests (native_sim)** | Builds the ztest suites for `native_sim` with the host compiler, runs them, then runs the plain C tests in `tests/host`. A failing check fails the job. |
+| **Firmware build (Nano 33 BLE)** | Builds the real firmware for `arduino_nano_33_ble/nrf52840` with the Zephyr SDK's ARM toolchain, prints the flash and RAM use in the job summary, and keeps `zephyr.bin`, `zephyr.hex` and `zephyr.elf` as a downloadable artifact. |
+
+**Pinned and minimal.** Zephyr v4.4.2 and SDK 1.0.1 (whose download is checked against a SHA-256) are fixed in `tools/ci_setup.sh`, and only the seven Zephyr modules this project actually needs are fetched: CMSIS, CMSIS 6, CMSIS-DSP, the Nordic and ST HALs, mbedTLS and TF-PSA-Crypto. The workspace and SDK are cached between runs.
+
+**Reproduce it locally** (Ubuntu or WSL2), for example in a scratch folder:
+```bash
+CI_ROOT=$PWD bash tools/ci_setup.sh workspace      # Zephyr + modules, about 1 GB
+CI_ROOT=$PWD bash tools/ci_setup.sh sdk            # ARM toolchain, about 2 GB
+cd zephyrproject/zephyr
+ZEPHYR_SDK_INSTALL_DIR=$OLDPWD/zephyr-sdk-1.0.1 west build -p always \
+    -b arduino_nano_33_ble/nrf52840 /path/to/this/repo -d ../../build/firmware
+```
+For the current code the firmware uses 279,868 bytes of flash (29.45 % of 928 KB) and 69,638 bytes of RAM (26.56 % of 256 KB), with no compiler warnings.
+
+**What CI does not do:** it only compiles the firmware and runs the PC tests. Bluetooth pairing, the sensor and everything else that needs the board and a phone are checked by hand on the hardware (see "BLE security").
+
 ## Known limitations
 - **Aliasing above 200 Hz.** At 400 Hz sampling, vibrations above 200 Hz appear mirrored below it (250 Hz would read about 150 Hz). The sensor runs at 952 Hz with its own filter at a few hundred Hz, which does not fully prevent this. The fix is to read the sensor's internal FIFO at its full rate, which Zephyr's LSM9DS1 driver does not support yet.
 - **Sample timing.** Polling a sensor that samples on its own clock gives up to about 1 ms uncertainty in when each value was taken: fine for finding a dominant frequency, not for precise phase or amplitude work.
@@ -129,5 +155,7 @@ The flash script makes the same call as the Arduino IDE (no `--offset`, see belo
 - **Check the stack, not memory.** Every pairing API and Kconfig name was checked against the Zephyr v4.4.2 source, which also showed what `bt_unpair` really does (disconnects the phone, deletes the keys and the stored notification state) and that the USB console driver discards output rather than blocking when no terminal is open.
 - **Make the policy fail the build.** A security setting that lives only in `prj.conf` can be dropped by accident; `BUILD_ASSERT`s in `ble_sec.c` turn that into a compile error (checked by compiling with the setting removed).
 - **Separate logic from the stack to test it.** The Bluetooth parts cannot run on the PC, so the byte formats (`ble_fmt.c`) and the unpair key sequence (`ble_cmd.c`) are plain C with their own PC tests; only the thin Zephyr glue is proven on the board.
+- **Find the minimal dependency set by building.** The first firmware build in a clean workspace failed twice, each time naming what was missing: Bluetooth security needs the mbedTLS crypto modules, and the LSM9DS1 driver needs the ST HAL. Fetching only what the build asks for keeps CI fast.
+- **A CI setup you cannot run is a guess.** The workflow's commands live in `tools/ci_setup.sh`, and the whole sequence was replayed from an empty directory before the first push. That also exposed that GitHub's API is rate-limited without a token, so the SDK is fetched from fixed release URLs instead.
 - **A suite is only as good as its checks.** The ztest port was compared check by check with the older PC tests; two slips (a wrong expected value and different input numbers in one rounding test) were found that way before the first run.
 - **Hardware surprises are still possible after tests pass.** The key parser passed every PC test, yet on the board a capital `Y` was not accepted once while `y` was. It is listed as a limitation rather than hidden.
