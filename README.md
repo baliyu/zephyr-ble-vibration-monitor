@@ -41,6 +41,22 @@ diagnostics/blinky_power_led.overlay   blinky on the green power LED, to prove t
 Zephyr itself lives outside the repository (`~/zephyrproject`, pinned to v4.4.2).
 
 ## How the analysis works
+
+<!-- diagram:zephyr_flow -->
+**Data flow, from sensor to phone**
+
+```mermaid
+flowchart LR
+    ACC["LSM9DS1 accelerometer"] -->|"read every 2.5 ms<br/>(399.6 Hz measured)"| SAM["Sampler thread<br/>high priority, kernel timer<br/>two ping-pong buffers"]
+    SAM -->|"512 samples = 1.28 s<br/>message queue"| AN["Analysis thread<br/>remove mean, Hann window,<br/>CMSIS-DSP real FFT per axis,<br/>sum spectra, interpolate the peak"]
+    AN --> CON["USB console (CDC ACM)<br/>log line per block"]
+    AN --> FMT["ble_fmt.c<br/>9-byte measurement and<br/>20-byte text summary"]
+    FMT --> GATT["GATT service VibMon Nano33<br/>read and notify, one per block"]
+    GATT -.->|"authenticated link required"| PH["Paired phone<br/>(nRF Connect)"]
+```
+
+*The dotted line means the values only reach a phone over an authenticated link (see BLE security).*
+
 - **Sampling:** a high-priority thread reads the accelerometer every 2.5 ms from a kernel timer into one of two buffers. When 512 samples (1.28 s) are collected it hands the buffer to the analysis thread through a message queue and carries on in the other buffer. It records the real sample rate, missed timer ticks, read errors and the slowest read.
 - **Analysis:** per axis, the mean (gravity) is removed and a Hann window applied before a CMSIS-DSP real FFT; the three power spectra are summed so the result does not depend on orientation. The peak is refined by Gaussian (log-parabolic) interpolation and the amplitude corrected for the window's scalloping loss. Below 0.05 m/s^2 rms the board counts as still; below 2 Hz is ignored (tilting).
 - **Measured rate, not nominal:** a 2.5 ms timer on a 32768 Hz system clock really gives 399.6 Hz; the frequency calculation uses the measured rate (a test shows assuming 400 Hz would put 50 Hz at 50.05 Hz).
@@ -65,6 +81,30 @@ One notification per analysed block (every 1.28 s) goes to a phone that has subs
 
 ## BLE security
 **Goal:** only a phone that has been paired with a passkey can read or subscribe to the vibration data. Anyone nearby can still see the device, connect to it and discover the service.
+
+<!-- diagram:zephyr_pairing -->
+**Pairing flow**
+
+```mermaid
+sequenceDiagram
+    participant P as Phone (nRF Connect)
+    participant B as Nano 33 BLE
+    participant C as USB console
+    P->>B: Connect (service layout and names are visible)
+    Note over P,B: Values and notifications need an authenticated link
+    B->>C: Print a random 6-digit passkey
+    Note over C,P: The user reads the passkey and types it into the phone
+    alt Correct passkey
+        P->>B: LE Secure Connections pairing, security level 4
+        B-->>P: Values and notifications arrive
+        Note over B: Bond kept in flash, survives RESET
+        P->>B: Reconnect later, no passkey needed
+    else Wrong passkey
+        B-->>P: Authentication failed, no notifications follow
+    end
+```
+
+*Checked on the board with an iPhone: pairing at security level 4, reconnecting without a passkey, and a wrong passkey being refused. Not checked: that an unpaired phone is refused a direct read (see "Not verified" below).*
 
 **How it works**
 - The characteristic values and their notification (CCC) descriptors require an *authenticated* link (`BT_GATT_PERM_READ_AUTHEN` / `WRITE_AUTHEN`). The text labels stay public because they carry no data.
