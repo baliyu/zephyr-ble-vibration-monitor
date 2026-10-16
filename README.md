@@ -6,6 +6,8 @@ Vibration monitor on the **Arduino Nano 33 BLE** (nRF52840, LSM9DS1 motion senso
 
 **Status: finished.** All ten planned steps are done and verified; the optional ideas that remain are listed under Known limitations.
 
+The interfaces (the six modules' headers, the BLE service, the tools and the tests) are listed in [docs/API.md](docs/API.md). It is generated from the code, and `tests/docs` checks it, and every number in this README that comes from the code, the configuration or the CI files.
+
 ## Progress
 - [x] Step 1 – Identified the motion sensor from the chip itself: LSM9DS1 (accel/gyro 0x6B, WHO_AM_I `0x68`; magnetometer 0x1E), so the original Nano 33 BLE, not the Rev2
 - [x] Step 2 – Zephyr 4.4.2 workspace and SDK 1.0.1 installed; blinky builds for `arduino_nano_33_ble/nrf52840`
@@ -32,7 +34,9 @@ src/ble_sec.c                  pairing policy: passkey display, pairing events, 
 src/ble_cmd.c                  the U-then-y console command as a pure state machine (tested on the PC)
 tests/host/                    PC tests: make -C tests/host (uses Zephyr's own CMSIS-DSP)
 tests/unit/                    ztest suites on native_sim (Zephyr test app, see "Unit tests")
-.github/workflows/ci.yml       the CI workflow (two jobs, see "Continuous integration")
+tests/docs/                    consistency tests for the documents (Python, no Zephyr needed): python3 -m unittest discover -s tests/docs
+docs/API.md                    the interfaces, generated from the code and checked by tests/docs
+.github/workflows/ci.yml       the CI workflow (three jobs, see "Continuous integration")
 tools/ci_setup.sh              pinned Zephyr workspace and SDK setup used by CI (and runnable by hand)
 tools/flash_nano33ble.sh       guarded flashing from WSL (bossac.exe on Windows)
 tools/flash_map.py             locate an image in a flash dump (diagnostic)
@@ -137,12 +141,13 @@ The `/64` variant needs no 32-bit libraries. The same suites run under Twister: 
 - A test that cannot fail proves nothing. As a check, the confirm window in `ble_cmd.c` was changed by one millisecond; exactly the two tests about the window failed, and the source was restored.
 
 ## Continuous integration
-`.github/workflows/ci.yml` runs on every push to `main`, on pull requests and on demand. Two jobs, both on Ubuntu 24.04:
+`.github/workflows/ci.yml` runs on every push to `main`, on pull requests and on demand. Three jobs, all on Ubuntu 24.04:
 
 | Job | What it does |
 |---|---|
 | **Unit tests (native_sim)** | Builds the ztest suites for `native_sim` with the host compiler, runs them, then runs the plain C tests in `tests/host`. A failing check fails the job. |
 | **Firmware build (Nano 33 BLE)** | Builds the real firmware for `arduino_nano_33_ble/nrf52840` with the Zephyr SDK's ARM toolchain, prints the flash and RAM use in the job summary, and keeps `zephyr.bin`, `zephyr.hex` and `zephyr.elf` as a downloadable artifact. |
+| **Reference and consistency checks** | Runs `python -m unittest discover -s tests/docs`: the generated reference is current, and the numbers in the README (test counts, the BLE example bytes, UUIDs, the sample rate, pinned versions, flash and RAM percentages) match the code and the CI files. Needs no Zephyr. |
 
 **Pinned and minimal.** Zephyr v4.4.2 and SDK 1.0.1 (whose download is checked against a SHA-256) are fixed in `tools/ci_setup.sh`, and only the seven Zephyr modules this project actually needs are fetched: CMSIS, CMSIS 6, CMSIS-DSP, the Nordic and ST HALs, mbedTLS and TF-PSA-Crypto. The workspace and SDK are cached between runs.
 
@@ -156,7 +161,7 @@ ZEPHYR_SDK_INSTALL_DIR=$OLDPWD/zephyr-sdk-1.0.1 west build -p always \
 ```
 For the current code the firmware uses 279,868 bytes of flash (29.45 % of 928 KB) and 69,638 bytes of RAM (26.56 % of 256 KB), with no compiler warnings.
 
-**What CI does not do:** it only compiles the firmware and runs the PC tests. Bluetooth pairing, the sensor and everything else that needs the board and a phone are checked by hand on the hardware (see "BLE security").
+**What CI does not do:** it only compiles the firmware, runs the PC tests and checks the documents. Bluetooth pairing, the sensor and everything else that needs the board and a phone are checked by hand on the hardware (see "BLE security").
 
 ## Security analysis
 A STRIDE threat model is in [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md): the attackers, assets and trust boundaries, 15 threats, the evidence behind each mitigation and the residual risk. It is my own design-level analysis, not an independent review. The three things I would fix first for a product: there is no secure boot or signed firmware (the Arduino bootloader accepts any image), a stranger can occupy the board's single BLE connection because unauthenticated links never time out, and the pairing keys are stored unencrypted in flash. A gap analysis against the 22 essential requirements of the EU Cyber Resilience Act (a self-assessment of how the project would measure up if it were a product) is in [docs/CRA_MAPPING.md](docs/CRA_MAPPING.md), and how to report a vulnerability is in [SECURITY.md](SECURITY.md).

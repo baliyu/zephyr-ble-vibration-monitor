@@ -24,6 +24,7 @@
 #define BLE_MEAS_LEN 9
 #define BLE_TEXT_MAX 20
 
+/* Encode r and the block sequence number seq into the 9-byte measurement; frequency and amplitude are 0 when r is not active. */
 void ble_meas_encode(const struct vib_result *r, uint16_t seq, uint8_t out[BLE_MEAS_LEN]);
 
 /* Writes the text (NUL-terminated) and returns its length (<= BLE_TEXT_MAX). */

@@ -30,6 +30,7 @@ struct ble_cmd {
 	uint32_t armed_ms;
 };
 
+/* Start idle: not armed. */
 void ble_cmd_init(struct ble_cmd *c);
 
 /* ch: the typed character, or -1 if none arrived. now_ms: any free-running

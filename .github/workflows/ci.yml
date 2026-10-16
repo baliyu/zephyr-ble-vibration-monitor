@@ -118,3 +118,19 @@ jobs:
             build/firmware/zephyr/zephyr.hex
             build/firmware/zephyr/zephyr.elf
           if-no-files-found: error
+
+  docs:
+    name: Reference and consistency checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Check the documents against the code (no Zephyr needed)
+        run: python -m unittest discover -s tests/docs -v
