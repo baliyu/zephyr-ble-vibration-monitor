@@ -32,6 +32,7 @@ struct vib_result {
 	bool active;        /* rms >= threshold: false means "still" */
 };
 
+/* Prepare the FFT and the Hann window. Call once before vib_fft_analyse(). Returns VIB_OK or VIB_ERR_INIT. */
 int vib_fft_init(void);
 
 /*

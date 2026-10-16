@@ -22,7 +22,9 @@ uint32_t accel_isqrt64(uint64_t v);
 /* |v| in the same units, rounded down. */
 int32_t accel_magnitude(const int32_t v[3]);
 
+/* Start a new window: clear the sums and the count, and reset the magnitude range. */
 void accel_stats_reset(struct accel_stats *s);
+/* Add one sample v (x, y, z): updates the per-axis sums, the count and the smallest and largest magnitude. */
 void accel_stats_add(struct accel_stats *s, const int32_t v[3]);
 
 /* Per-axis mean (integer division, truncates toward zero). Returns -1 if empty. */

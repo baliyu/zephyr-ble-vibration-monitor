@@ -23,6 +23,7 @@ int ble_vib_init(void);
  * restarts advertising after a disconnection. Call once per analysed block. */
 enum ble_vib_state ble_vib_publish(const struct vib_result *r, uint16_t seq);
 
+/* Short text for a state, for the console log. Returns a constant string. */
 const char *ble_vib_state_str(enum ble_vib_state s);
 
 #endif

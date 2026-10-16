@@ -19,17 +19,20 @@ import sys
 
 
 def read_file(path):
+    """The whole file as bytes."""
     with open(path, "rb") as f:
         return f.read()
 
 
 def words_at(dump, addr):
+    """The two 32-bit little-endian words at addr in the dump (initial stack pointer, reset vector), or None if they lie outside it."""
     if addr + 8 > len(dump):
         return None
     return struct.unpack_from("<II", dump, addr)
 
 
 def describe_words(w):
+    """Text saying what a pair of vector-table words looks like: erased, a plausible vector table, or neither."""
     if w is None:
         return "(outside the dump)"
     sp, reset = w
@@ -40,6 +43,7 @@ def describe_words(w):
 
 
 def find_image(dump, img, page):
+    """Every offset in the dump where the first 256 bytes of the image occur."""
     probe = img[:256]
     hits = []
     start = 0
@@ -53,6 +57,7 @@ def find_image(dump, img, page):
 
 
 def build_map(dump, page, img_start, img_len):
+    """The dump page by page, merged into runs: [first address, last address, (erased or data, image or other)]."""
     rows = []
     for a in range(0, len(dump), page):
         p = dump[a:a + page]
@@ -67,11 +72,12 @@ def build_map(dump, page, img_start, img_len):
 
 
 def main(argv=None):
+    """Command line: map the dump, find the image in it and say whether it sits where the board expects. Returns the exit status."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("dump")
-    ap.add_argument("image")
+    ap.add_argument("dump", help="a flash read-back taken with bossac --read, starting at address 0")
+    ap.add_argument("image", help="the image to look for (zephyr.bin)")
     ap.add_argument("--expect", default="0x10000", help="address the image should start at (default 0x10000)")
-    ap.add_argument("--page", type=int, default=4096)
+    ap.add_argument("--page", type=int, default=4096, help="size of a flash page in bytes, for the map (default 4096)")
     a = ap.parse_args(argv)
 
     dump, img = read_file(a.dump), read_file(a.image)
